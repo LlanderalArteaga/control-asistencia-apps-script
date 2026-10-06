@@ -1,0 +1,162 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Control de asistencia</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #f3f4f6; color: #111827; }
+    main { max-width: 760px; margin: auto; padding: 16px; }
+    section { background: white; border-radius: 14px; padding: 18px; margin-bottom: 14px; box-shadow: 0 2px 10px #00000014; }
+    h1 { margin: 0 0 6px; font-size: 1.45rem; }
+    .subtitulo, .correo { color: #596273; }
+    label { font-weight: bold; }
+    select, button { width: 100%; min-height: 48px; border-radius: 10px; font-size: 1rem; padding: 12px; }
+    select { border: 1px solid #d1d5db; background: white; margin-top: 8px; }
+    button { border: 0; font-weight: bold; cursor: pointer; background: #e5e7eb; }
+    button:disabled { opacity: .55; cursor: default; }
+    :focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+    .acciones { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+    .resumen { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-top: 16px; }
+    .participante { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid #e5e7eb; }
+    .datos { min-width: 0; }
+    .correo { font-size: .9rem; font-weight: normal; overflow-wrap: anywhere; }
+    input[type=checkbox] { width: 28px; height: 28px; flex-shrink: 0; }
+    #guardar { background: #111827; color: white; margin-top: 14px; }
+    #mensaje { padding-top: 12px; overflow-wrap: anywhere; }
+    .ok { color: #166534; } .error { color: #991b1b; }
+    #cargando { padding: 12px; text-align: center; }
+    @media(max-width: 520px) { main { padding: 10px; } section { padding: 14px; } .acciones { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <section><h1>Control de asistencia</h1><p class="subtitulo">30 participantes · 10 sesiones</p></section>
+  <section>
+    <label for="sesion">Sesión</label>
+    <select id="sesion" disabled><option value="">Selecciona una sesión</option></select>
+    <div class="acciones">
+      <button id="todos" disabled>Marcar todos</button>
+      <button id="ninguno" disabled>Desmarcar todos</button>
+    </div>
+    <div class="resumen"><span id="contador" aria-live="polite">Presentes: 0 / 0</span><span id="estadoSesion"></span></div>
+  </section>
+  <section>
+    <div id="cargando" role="status" hidden>Cargando...</div>
+    <div id="lista">Selecciona una sesión para registrar asistencia.</div>
+    <button id="guardar" disabled>Guardar asistencia</button>
+    <div id="mensaje" role="status" aria-live="polite"></div>
+  </section>
+</main>
+<script>
+  let participantes = [];
+  let sesiones = [];
+  let ocupado = false;
+  let sesionCargada = '';
+  const elemento = id => document.getElementById(id);
+
+  document.addEventListener('DOMContentLoaded', cargarSesiones);
+  elemento('sesion').addEventListener('change', cargarParticipantes);
+  elemento('todos').addEventListener('click', () => marcarTodos(true));
+  elemento('ninguno').addEventListener('click', () => marcarTodos(false));
+  elemento('guardar').addEventListener('click', guardar);
+
+  function mostrarCarga(valor) {
+    ocupado = valor;
+    elemento('cargando').hidden = !valor;
+    elemento('sesion').disabled = valor;
+    const sinLista = !sesionCargada || participantes.length === 0;
+    ['todos', 'ninguno', 'guardar'].forEach(id => { elemento(id).disabled = valor || sinLista; });
+    document.querySelectorAll('input[type=checkbox]').forEach(check => { check.disabled = valor; });
+  }
+  function mostrarMensaje(texto, correcto) {
+    elemento('mensaje').textContent = texto;
+    elemento('mensaje').className = correcto ? 'ok' : 'error';
+  }
+  function mostrarError(error) {
+    mostrarCarga(false);
+    mostrarMensaje(error && error.message ? error.message : String(error), false);
+  }
+  function cargarSesiones() {
+    mostrarCarga(true);
+    google.script.run.withSuccessHandler(datos => {
+      sesiones = datos || [];
+      sesiones.forEach(s => {
+        const opcion = document.createElement('option');
+        opcion.value = s.id;
+        opcion.textContent = 'Sesión ' + s.numero + ' · ' + s.fecha + ' · ' + s.tema;
+        elemento('sesion').appendChild(opcion);
+      });
+      mostrarCarga(false);
+      if (!sesiones.length) mostrarMensaje('No hay sesiones. Ejecuta prepararBaseDatos().', false);
+    }).withFailureHandler(mostrarError).obtenerSesiones();
+  }
+  function cargarParticipantes() {
+    const idSesion = elemento('sesion').value;
+    participantes = [];
+    sesionCargada = '';
+    renderParticipantes();
+    mostrarMensaje('', true);
+    const sesion = sesiones.find(s => s.id === idSesion);
+    elemento('estadoSesion').textContent = sesion ? sesion.estado : '';
+    if (!idSesion) { mostrarCarga(false); return; }
+    mostrarCarga(true);
+    google.script.run.withSuccessHandler(datos => {
+      participantes = datos || [];
+      sesionCargada = idSesion;
+      renderParticipantes();
+      mostrarCarga(false);
+    }).withFailureHandler(mostrarError).obtenerParticipantes(idSesion);
+  }
+  function renderParticipantes() {
+    const lista = elemento('lista');
+    lista.replaceChildren();
+    if (!participantes.length) lista.textContent = 'No hay participantes cargados.';
+    participantes.forEach(p => {
+      const fila = document.createElement('label');
+      fila.className = 'participante';
+      const datos = document.createElement('div');
+      datos.className = 'datos';
+      const nombre = document.createElement('div');
+      nombre.textContent = p.id + ' · ' + p.nombre;
+      const correo = document.createElement('div');
+      correo.className = 'correo';
+      correo.textContent = p.correo;
+      datos.append(nombre, correo);
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.checked = p.presente;
+      check.setAttribute('aria-label', 'Presente: ' + p.nombre);
+      check.addEventListener('change', () => { p.presente = check.checked; actualizarContador(); });
+      fila.append(datos, check);
+      lista.appendChild(fila);
+    });
+    actualizarContador();
+  }
+  function actualizarContador() {
+    elemento('contador').textContent = 'Presentes: ' + participantes.filter(p => p.presente).length + ' / ' + participantes.length;
+  }
+  function marcarTodos(valor) {
+    if (ocupado || !sesionCargada) return;
+    participantes.forEach(p => { p.presente = valor; });
+    renderParticipantes();
+  }
+  function guardar() {
+    if (ocupado || !sesionCargada || !participantes.length) return;
+    const idSesion = sesionCargada;
+    const datos = participantes.map(p => ({ id: p.id, presente: p.presente }));
+    mostrarMensaje('', true);
+    mostrarCarga(true);
+    google.script.run.withSuccessHandler(resultado => {
+      const sesion = sesiones.find(s => s.id === idSesion);
+      if (sesion) sesion.estado = 'REGISTRADA';
+      elemento('estadoSesion').textContent = 'REGISTRADA';
+      mostrarCarga(false);
+      mostrarMensaje('Guardado: ' + resultado.presentes + ' presentes y ' + resultado.ausentes + ' ausentes.', true);
+    }).withFailureHandler(mostrarError).guardarAsistencia(idSesion, datos);
+  }
+</script>
+</body>
+</html>
